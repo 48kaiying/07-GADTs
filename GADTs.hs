@@ -62,17 +62,23 @@ oevaluate (OAdd e1 e2) =
     (Just (Left i1), Just (Left i2)) -> Just (Left (i1 + i2))
     _ -> Nothing
 oevaluate (OIsZero e1) =
-  undefined
+  case oevaluate e1 of
+    Just (Left i) -> Just (Right $ i == 0)
+    _ -> Just (Right False)
 oevaluate (OIf e1 e2 e3) =
-  undefined
+  case oevaluate e1 of
+    Just (Right True) -> oevaluate e2
+    _ -> oevaluate e3
 
 {-
 Ugh. That Maybe/Either combination is awkward.
 -}
 
 -- >>> oevaluate oe1
+-- Just (Left 4)
 
 -- >>> oevaluate oe2
+-- Just (Left 3)
 
 {-
 Plus, this language admits some strange terms:
@@ -87,8 +93,10 @@ bad_oe2 :: OExp
 bad_oe2 = OIf (OInt 1) (OBool True) (OInt 3)
 
 -- >>> oevaluate bad_oe1
+-- Nothing
 
 -- >>> oevaluate bad_oe2
+-- Just (Left 3)
 
 {-
 A Typed Expression Evaluator
@@ -158,10 +166,8 @@ evaluate :: GExp t -> t
 evaluate (GInt i) = i
 evaluate (GBool b) = b
 evaluate (GAdd e1 e2) = evaluate e1 + evaluate e2
-evaluate (GIsZero e1) =
-  undefined
-evaluate (GIf e1 e2 e3) =
-  undefined
+evaluate (GIsZero e1) = evaluate e1 == 0
+evaluate (GIf e1 e2 e3) = if evaluate e1 then evaluate e2 else evaluate e3
 
 {-
 Not only that, our evaluator is more efficient [1] because it does not need to
@@ -259,8 +265,12 @@ safeHd :: List NonEmpty a -> a
 safeHd (Cons h _) = h
 
 -- >>> safeHd ex1
+-- 1
 
 -- >>> safeHd ex0
+-- Couldn't match type ‘'Empty’ with ‘'NonEmpty’
+-- Expected: List 'NonEmpty Int
+--   Actual: List 'Empty Int
 
 {-
 (In fact, including a case for `Nil` is not only not needed: it is not
@@ -273,8 +283,10 @@ Compare this definition to the unsafe version of head.
 --unsafeHd (x : _) = x
 
 -- >>> unsafeHd [1,2]
+-- Variable not in scope: unsafeHd :: [a0] -> t
 
 -- >>> unsafeHd []
+-- Variable not in scope: unsafeHd :: [a0] -> t
 
 {-
 This `Empty`/`NonEmpty` flag doesn't interact much with some of the list
@@ -282,7 +294,8 @@ functions. For example, `foldr` works for both empty and nonempty lists.
 -}
 
 foldr' :: (a -> b -> b) -> b -> List f a -> b
-foldr' = undefined
+foldr' f acc Nil = acc
+foldr' f acc (Cons h tl) = foldr' f (f h acc) tl
 
 {-
 But the `foldr1` variant (which assumes that the list is nonempty and
@@ -291,7 +304,7 @@ nonempty.
 -}
 
 foldr1' :: (a -> a -> a) -> List NonEmpty a -> a
-foldr1' = undefined
+foldr1' f (Cons h tl) = foldr' f h tl
 
 {-
 The type of `map` becomes stronger in an interesting way: It says that
@@ -302,7 +315,8 @@ type check. (Though, sadly, it would still type check if we had two
 -}
 
 map' :: (a -> b) -> List f a -> List f b
-map' = undefined
+map' f Nil = Nil
+map' f (Cons h tl) = Cons (f h) (map' f tl)
 
 {-
 For `filter`, we don't know whether the output list will be empty or
@@ -337,7 +351,8 @@ use pattern matching.  For example:
 -}
 
 isNonempty :: OldList a -> Maybe (List NonEmpty a)
-isNonempty = undefined
+isNonempty (OL Nil) = Nothing
+isNonempty (OL l@(Cons _ _)) = Just l
 
 {-
 Now we can use `OldList` as the result of `filter'`, with a bit of
@@ -345,7 +360,19 @@ additional pattern matching.
 -}
 
 filter' :: (a -> Bool) -> List f a -> OldList a
-filter' = undefined
+filter' p Nil = OL Nil
+filter' p (Cons h tl) = 
+  if p h then
+    case isNonempty (filter' p tl) of
+      Nothing -> OL (Cons h Nil)
+      Just tl' -> OL (Cons h tl')
+  else 
+    filter' p tl
+
+--- >>> filter' (>= 2) ex1 
+-- No instance for (Show (OldList Int))
+--   arising from a use of ‘evalPrint’
+
 
 {-
 Although these examples are simple, GADTs and DataKinds can also work in much
